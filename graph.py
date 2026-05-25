@@ -25,6 +25,7 @@ from report import build_report
 from risk_filter import risk_quality_filter
 from scanner import autonomous_scan
 from schemas import TradeOpportunity, TradingResearchState
+from observability import init_tracer, get_tracer
 
 
 WorkflowNode = Callable[[TradingResearchState], TradingResearchState]
@@ -260,11 +261,58 @@ def post_trade_review(state: TradingResearchState) -> TradingResearchState:
 # Simple workflow (no LangGraph dependency)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Slack + Observability — notify and log after report is built
+# ---------------------------------------------------------------------------
+
+def notify_and_log(state: TradingResearchState) -> TradingResearchState:
+    """
+    Post-report node:
+      1. Sends Slack notifications for top opportunities (if SLACK_WEBHOOK_URL set)
+      2. Flushes the run tracer to data/logs/
+      3. Embeds trace summary into state.final_report
+    """
+    import os
+
+    # 1 — Slack notifications
+    try:
+        from slack_notify import notify_opportunities, notify_run_summary, is_available
+        if is_available():
+            ranked = state.final_report.get("top_opportunities", [])
+            run_id = state.final_report.get("run_id", "unknown")
+            notify_opportunities(ranked, run_id=run_id, max_to_send=3)
+            notify_run_summary(state.final_report, run_id=run_id)
+    except Exception as exc:
+        state.errors.append(f"slack_notify: {exc}")
+
+    # 2 — Flush tracer to disk
+    try:
+        tracer = get_tracer()
+        log_file = tracer.flush(final_summary={
+            "opportunities_count": state.final_report.get("opportunities_count", 0),
+            "top_opportunity": state.final_report.get("top_opportunity", ""),
+            "errors": state.errors,
+        })
+        # 3 — Embed trace info in report
+        state.final_report["observability"] = {
+            "trace_id": tracer.trace_id,
+            "log_file": str(log_file),
+            **tracer.summary(),
+        }
+    except Exception as exc:
+        state.errors.append(f"observability_flush: {exc}")
+
+    return state
+
+
 def run_simple_workflow(state: TradingResearchState) -> TradingResearchState:
     """
     Dependency-light fallback runner.
     Same node boundaries as the LangGraph workflow, useful for quick testing.
     """
+    # Initialise tracer for this run
+    tracer = init_tracer(run_id=getattr(state, "run_id", None))
+
     nodes: List[WorkflowNode] = [
         autonomous_scan,
         research_candidates,
@@ -274,13 +322,30 @@ def run_simple_workflow(state: TradingResearchState) -> TradingResearchState:
         build_report,
         monitor_executions,   # Crew 4 — no-op when no open positions
         post_trade_review,    # Crew 5 — no-op when no closed trade
+        notify_and_log,       # Slack HiTL + observability flush
     ]
 
     for node in nodes:
         try:
-            state = node(state)
+            with tracer.span(node.__name__) as span:
+                state = node(state)
+                # Log key metrics per node
+                if node.__name__ == "autonomous_scan":
+                    span.set_data({"candidates": len(state.raw_candidates)})
+                elif node.__name__ == "research_candidates":
+                    span.set_data({"items": len(state.research_items)})
+                elif node.__name__ == "generate_opportunities":
+                    span.set_data({"opportunities": len(state.opportunities)})
+                elif node.__name__ == "risk_quality_filter":
+                    span.set_data({
+                        "passed": len(state.filtered_opportunities),
+                        "rejected": len(state.rejected_opportunities),
+                    })
+                elif node.__name__ == "rank_opportunities":
+                    span.set_data({"ranked": len(state.ranked_opportunities)})
         except Exception as exc:  # noqa: BLE001
             state.errors.append(f"{node.__name__}: {exc}")
+            tracer.log(node.__name__, str(exc), level="ERROR")
             break
 
     return state
