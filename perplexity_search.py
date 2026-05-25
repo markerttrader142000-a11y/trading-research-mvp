@@ -108,11 +108,11 @@ def _build_query(asset: str, market: str) -> str:
     }.get(market.lower(), "financial instrument")
 
     return (
-        f"What are the key news, catalysts, and macro drivers for {asset} "
-        f"({market_context}) {today_hint}? "
-        f"Include: recent central bank statements, economic data releases, "
-        f"geopolitical events, and technical levels if relevant. "
-        f"Be concise and factual. Focus on actionable trading catalysts."
+        f"Summarise the current market situation for {asset} ({market_context}). "
+        f"What are the main macro themes, recent central bank stance, and key risks "
+        f"affecting this instrument right now? "
+        f"Include any relevant economic data released recently or upcoming events. "
+        f"Keep it concise — 3 to 5 sentences is enough."
     )
 
 
@@ -136,14 +136,16 @@ def _call_perplexity(
             "Accept": "application/json",
         }
         payload = {
-            "model": f"llama-3.1-sonar-small-128k-online" if model == "sonar" else "llama-3.1-sonar-large-128k-online",
+            "model": "sonar" if model == "sonar" else "sonar-pro",
             "messages": [
                 {
                     "role": "system",
                     "content": (
-                        "You are a professional financial market analyst with access to "
-                        "real-time news. Provide factual, concise analysis of market "
-                        "catalysts and risks. Be specific about events and data."
+                        "You are a concise financial market analyst. "
+                        "Summarise the current macro context and key drivers for the "
+                        "requested asset. Use your knowledge and any available search "
+                        "results. If specific news is unavailable, provide the general "
+                        "macro backdrop and key risks. Always respond in plain prose."
                     ),
                 },
                 {"role": "user", "content": query},
@@ -167,47 +169,72 @@ def _call_perplexity(
 def _parse_response(asset: str, raw_text: str) -> PerplexityResult:
     """
     Parses Perplexity's free-text response into a structured PerplexityResult.
-    Uses simple heuristics — no LLM needed for parsing.
+    Strategy: clean the text first, then split into sentences and categorise.
     """
-    lines = [l.strip() for l in raw_text.split("\n") if l.strip()]
+    # Clean markdown FIRST before any extraction
+    clean = re.sub(r"\[\d+\]", "", raw_text)           # remove [1] [2] citations
+    clean = re.sub(r"\*\*([^*]+)\*\*", r"\1", clean)  # remove **bold**
+    clean = re.sub(r"\*([^*]+)\*", r"\1", clean)       # remove *italic*
+    clean = re.sub(r"#+\s+", "", clean)                 # remove ## headers
+    clean = re.sub(r"^[-•]\s+", "", clean, flags=re.MULTILINE)  # remove bullets
+    clean = re.sub(r"\s{2,}", " ", clean).strip()       # collapse whitespace
 
-    # Extract summary (first 2-3 sentences of meaningful content)
-    summary_lines = []
-    for line in lines[:8]:
-        if len(line) > 40 and not line.startswith("#"):
-            summary_lines.append(line)
-        if len(summary_lines) >= 2:
-            break
-    summary = " ".join(summary_lines)[:500] or raw_text[:300]
+    # Skip if Perplexity refused to answer
+    refusal_signals = ["i don't have enough", "i cannot provide", "no reliable"]
+    if any(s in clean.lower()[:200] for s in refusal_signals):
+        # Try to use whatever it did say after the refusal
+        parts = clean.split(".")
+        useful = [p.strip() for p in parts if len(p.strip()) > 40
+                  and not any(s in p.lower() for s in refusal_signals)]
+        if not useful:
+            return PerplexityResult(asset=asset, success=False)
+        clean = ". ".join(useful)
 
-    # Extract catalysts (bullet points or sentences with catalyst keywords)
-    catalysts = _extract_items(raw_text, keywords=[
-        "catalyst", "driver", "boost", "rally", "surge", "rise",
-        "bullish", "positive", "support", "upside", "rate hike",
-        "strong", "beat", "exceed"
-    ])
+    # Split into complete sentences
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", clean)
+                 if len(s.strip()) > 30]
 
-    # Extract risks (sentences with risk keywords)
-    risks = _extract_items(raw_text, keywords=[
-        "risk", "concern", "bearish", "sell", "decline", "fall",
-        "weak", "miss", "below", "downside", "pressure", "war",
-        "inflation", "recession", "uncertainty"
-    ])
+    # Summary = first 2 meaningful sentences
+    summary = " ".join(sentences[:2])[:500]
 
-    # Extract macro events (dates, central bank mentions, data releases)
-    macro_events = _extract_macro_events(raw_text)
+    # Catalysts = sentences with bullish/upside keywords
+    catalyst_kws = ["support", "bullish", "rally", "upside", "rate cut",
+                    "easing", "strong", "positive", "catalyst", "boost",
+                    "higher", "rise", "gain"]
+    catalysts = [s for s in sentences
+                 if any(k in s.lower() for k in catalyst_kws)
+                 and len(s) > 40][:3]
 
-    # Extract source citations if present (Perplexity includes [1], [2], etc.)
-    sources = _extract_sources(raw_text)
-    if not sources:
-        sources = ["Perplexity AI real-time search"]
+    # Risks = sentences with bearish/downside keywords
+    risk_kws = ["risk", "weak", "downside", "bearish", "pressure", "concern",
+                "cut", "decline", "fall", "miss", "uncertainty", "shock",
+                "inflation", "recession", "slower"]
+    risks = [s for s in sentences
+             if any(k in s.lower() for k in risk_kws)
+             and len(s) > 40][:3]
+
+    # Macro events = sentences mentioning central banks or data
+    macro_kws = ["fed", "ecb", "boj", "boe", "fomc", "central bank",
+                 "cpi", "gdp", "nfp", "payroll", "rate decision",
+                 "powell", "lagarde", "meeting", "data"]
+    macro_events = [s for s in sentences
+                    if any(k in s.lower() for k in macro_kws)
+                    and len(s) > 40][:3]
+
+    # Fallback: if nothing extracted, use first 3 sentences
+    if not catalysts:
+        catalysts = sentences[1:3] if len(sentences) > 1 else []
+    if not risks:
+        risks = sentences[2:4] if len(sentences) > 2 else []
+
+    sources = _extract_sources(raw_text) or ["Perplexity AI real-time search"]
 
     return PerplexityResult(
         asset=asset,
         summary=summary,
-        catalysts=catalysts[:3],
-        risks=risks[:3],
-        macro_events=macro_events[:3],
+        catalysts=catalysts,
+        risks=risks,
+        macro_events=macro_events,
         sources=sources[:5],
         raw_text=raw_text,
         success=True,
@@ -215,19 +242,25 @@ def _parse_response(asset: str, raw_text: str) -> PerplexityResult:
 
 
 def _extract_items(text: str, keywords: List[str]) -> List[str]:
-    """Extracts sentences containing any of the keywords."""
+    """Extracts complete sentences containing any of the keywords."""
     results = []
-    sentences = re.split(r"(?<=[.!?])\s+", text)
+    # Split on sentence boundaries (period/!/? followed by space+capital)
+    sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", text)
     for sentence in sentences:
         sentence = sentence.strip()
-        if len(sentence) < 20:
+        # Skip very short or very long fragments
+        if len(sentence) < 25 or len(sentence) > 400:
             continue
+        # Skip sentences that are just refusals/meta-commentary
         lower = sentence.lower()
+        if any(skip in lower for skip in ["i don't have", "i cannot", "fallback", "if you want"]):
+            continue
         if any(kw in lower for kw in keywords):
-            # Clean up bullet markers
-            clean = re.sub(r"^[-•*\d.]+\s*", "", sentence).strip()
+            # Clean up bullet markers and markdown
+            clean = re.sub(r"^[-•*\d.]+\s*", "", sentence)
+            clean = re.sub(r"\*+", "", clean).strip()
             if clean and clean not in results:
-                results.append(clean[:200])
+                results.append(clean[:250])
     return results
 
 
@@ -263,8 +296,16 @@ def _extract_sources(text: str) -> List[str]:
 
 if __name__ == "__main__":
     import sys
+    # Load .env so the script works when run directly
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
     asset = sys.argv[1] if len(sys.argv) > 1 else "EURUSD"
     print(f"Searching Perplexity for {asset}...")
+    print(f"API key present: {bool(os.environ.get('PERPLEXITY_API_KEY'))}")
     result = search_market_news(asset, market="forex")
     if result.success:
         print(f"\nSummary: {result.summary}")
@@ -273,4 +314,4 @@ if __name__ == "__main__":
         print(f"\nMacro events: {result.macro_events}")
         print(f"\nSources: {result.sources}")
     else:
-        print("PERPLEXITY_API_KEY not set or call failed.")
+        print("Call failed — check key and model name.")
