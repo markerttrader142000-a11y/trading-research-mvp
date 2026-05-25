@@ -1,0 +1,40 @@
+# Secrets — NEVER commit these
+.env
+.env.local
+.env.*.local
+.ctrader_tokens.json
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyc
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Runtime outputs (not needed for deploy)
+report.json
+data/runs.db
+data/*.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log

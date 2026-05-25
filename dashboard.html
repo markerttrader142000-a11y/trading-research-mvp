@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Research Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1" integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ" crossorigin="anonymous"></script>
+    <style>
+        :root {
+            --bg: #0f1117;
+            --bg-card: #1a1d27;
+            --bg-card2: #1e2130;
+            --border: #2a2d3e;
+            --text: #e8eaf0;
+            --text-muted: #7b7f96;
+            --accent: #4f8ef7;
+            --accent2: #7c5cbf;
+            --green: #27c98b;
+            --red: #f05c6e;
+            --yellow: #f5c842;
+            --orange: #f5874a;
+            --gap: 16px;
+            --radius: 10px;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace; background:var(--bg); color:var(--text); min-height:100vh; }
+
+        /* ── Header ── */
+        .header { background:var(--bg-card); border-bottom:1px solid var(--border); padding:18px 28px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; position:sticky; top:0; z-index:100; }
+        .header-left h1 { font-size:17px; font-weight:700; letter-spacing:.3px; color:var(--text); }
+        .header-left span { font-size:12px; color:var(--text-muted); margin-left:10px; }
+        .badge { display:inline-flex; align-items:center; gap:5px; font-size:11px; padding:3px 9px; border-radius:20px; font-weight:600; letter-spacing:.3px; }
+        .badge-green { background:rgba(39,201,139,.15); color:var(--green); }
+        .badge-yellow { background:rgba(245,200,66,.15); color:var(--yellow); }
+        .badge-red { background:rgba(240,92,110,.15); color:var(--red); }
+        .badge-blue { background:rgba(79,142,247,.15); color:var(--accent); }
+        .badge-dot { width:6px; height:6px; border-radius:50%; background:currentColor; }
+        .filters { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+        .filters select { background:var(--bg); border:1px solid var(--border); color:var(--text); padding:6px 10px; border-radius:6px; font-size:12px; cursor:pointer; }
+        .btn-load { background:var(--accent); color:#fff; border:none; padding:7px 14px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; }
+        .btn-load:hover { background:#3a7de0; }
+
+        /* ── Layout ── */
+        .main { max-width:1400px; margin:0 auto; padding:20px 24px; }
+        .section-title { font-size:12px; font-weight:700; letter-spacing:.8px; text-transform:uppercase; color:var(--text-muted); margin-bottom:12px; }
+
+        /* ── KPI Row ── */
+        .kpi-row { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px,1fr)); gap:var(--gap); margin-bottom:var(--gap); }
+        .kpi-card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:18px 20px; }
+        .kpi-label { font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; }
+        .kpi-value { font-size:26px; font-weight:700; margin-bottom:4px; }
+        .kpi-sub { font-size:11px; color:var(--text-muted); }
+        .kpi-card.accent-green { border-left:3px solid var(--green); }
+        .kpi-card.accent-blue { border-left:3px solid var(--accent); }
+        .kpi-card.accent-yellow { border-left:3px solid var(--yellow); }
+        .kpi-card.accent-red { border-left:3px solid var(--red); }
+        .kpi-card.accent-purple { border-left:3px solid var(--accent2); }
+
+        /* ── Charts ── */
+        .chart-row { display:grid; grid-template-columns:2fr 1fr; gap:var(--gap); margin-bottom:var(--gap); }
+        .chart-row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:var(--gap); margin-bottom:var(--gap); }
+        .chart-card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:20px; }
+        .chart-card h3 { font-size:13px; font-weight:600; margin-bottom:16px; color:var(--text); }
+        .chart-card canvas { max-height:260px; }
+
+        /* ── Opportunity Cards ── */
+        .opp-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(340px,1fr)); gap:var(--gap); margin-bottom:var(--gap); }
+        .opp-card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:18px 20px; position:relative; overflow:hidden; transition:border-color .2s; }
+        .opp-card:hover { border-color:var(--accent); }
+        .opp-card.long { border-top:3px solid var(--green); }
+        .opp-card.short { border-top:3px solid var(--red); }
+        .opp-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px; }
+        .opp-asset { font-size:20px; font-weight:800; letter-spacing:-.3px; }
+        .opp-rank { font-size:11px; color:var(--text-muted); font-weight:700; }
+        .opp-score { font-size:24px; font-weight:800; }
+        .score-green { color:var(--green); }
+        .score-yellow { color:var(--yellow); }
+        .opp-direction { font-size:12px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; margin-bottom:8px; }
+        .dir-long { color:var(--green); }
+        .dir-short { color:var(--red); }
+        .opp-thesis { font-size:12px; color:var(--text-muted); line-height:1.5; margin-bottom:12px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+        .opp-metrics { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px; }
+        .metric-box { background:var(--bg); border-radius:6px; padding:8px 10px; }
+        .metric-box .label { font-size:10px; color:var(--text-muted); margin-bottom:2px; letter-spacing:.3px; }
+        .metric-box .val { font-size:13px; font-weight:700; font-family:monospace; }
+        .opp-why { font-size:11px; color:var(--text-muted); border-top:1px solid var(--border); padding-top:10px; margin-top:4px; line-height:1.5; }
+        .opp-tags { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+
+        /* ── Table ── */
+        .table-card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:20px; margin-bottom:var(--gap); overflow-x:auto; }
+        .table-card h3 { font-size:13px; font-weight:600; margin-bottom:14px; }
+        table { width:100%; border-collapse:collapse; font-size:12px; }
+        th { text-align:left; padding:8px 12px; border-bottom:1px solid var(--border); color:var(--text-muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.5px; cursor:pointer; white-space:nowrap; user-select:none; }
+        th:hover { color:var(--text); }
+        td { padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.04); white-space:nowrap; }
+        tr:hover td { background:rgba(255,255,255,.03); }
+        tr:last-child td { border-bottom:none; }
+        .td-asset { font-weight:800; font-size:13px; }
+        .td-long { color:var(--green); font-weight:700; }
+        .td-short { color:var(--red); font-weight:700; }
+        .td-score { font-weight:800; font-family:monospace; }
+        .td-watch { color:var(--green); font-weight:600; }
+        .td-review { color:var(--yellow); font-weight:600; }
+
+        /* ── Empty / Load state ── */
+        .empty-state { text-align:center; padding:60px 20px; color:var(--text-muted); }
+        .empty-state h2 { font-size:16px; margin-bottom:8px; color:var(--text); }
+        .empty-state p { font-size:13px; line-height:1.6; max-width:480px; margin:0 auto 20px; }
+        .drop-zone { border:2px dashed var(--border); border-radius:var(--radius); padding:30px; text-align:center; cursor:pointer; transition:border-color .2s; margin:0 auto; max-width:500px; }
+        .drop-zone:hover, .drop-zone.drag-over { border-color:var(--accent); }
+        .drop-zone input { display:none; }
+        .drop-zone label { cursor:pointer; }
+        .drop-zone .icon { font-size:36px; margin-bottom:12px; }
+        .drop-zone .hint { font-size:12px; color:var(--text-muted); margin-top:8px; }
+
+        /* ── Monitoring section ── */
+        .monitoring-row { display:grid; grid-template-columns:1fr 1fr; gap:var(--gap); margin-bottom:var(--gap); }
+        .info-card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:18px 20px; }
+        .info-card h3 { font-size:13px; font-weight:600; margin-bottom:12px; }
+        .info-row { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid rgba(255,255,255,.04); font-size:12px; }
+        .info-row:last-child { border-bottom:none; }
+        .info-key { color:var(--text-muted); }
+        .info-val { font-weight:600; font-family:monospace; }
+
+        /* ── Footer ── */
+        .footer { text-align:center; padding:24px; font-size:11px; color:var(--text-muted); border-top:1px solid var(--border); margin-top:8px; }
+
+        /* ── Scrollbar ── */
+        ::-webkit-scrollbar { width:6px; height:6px; }
+        ::-webkit-scrollbar-track { background:var(--bg); }
+        ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+
+        @media (max-width:900px) {
+            .chart-row, .chart-row-3, .monitoring-row { grid-template-columns:1fr; }
+            .opp-grid { grid-template-columns:1fr; }
+            .kpi-row { grid-template-columns:repeat(2,1fr); }
+        }
+    </style>
+</head>
+<body>
+
+<header class="header">
+    <div class="header-left">
+        <h1>📊 Trading Research Dashboard</h1>
+        <span id="header-date">—</span>
+    </div>
+    <div class="filters">
+        <select id="filter-direction" onchange="applyFilters()">
+            <option value="all">Todas direções</option>
+            <option value="long">Long</option>
+            <option value="short">Short</option>
+        </select>
+        <select id="filter-decision" onchange="applyFilters()">
+            <option value="all">Todas decisões</option>
+            <option value="watch_for_entry">Watch for Entry</option>
+            <option value="review_manually">Review Manually</option>
+        </select>
+        <button class="btn-load" onclick="document.getElementById('file-input').click()">
+            📂 Carregar JSON
+        </button>
+        <input type="file" id="file-input" accept=".json" style="display:none" onchange="loadFile(event)">
+    </div>
+</header>
+
+<div class="main" id="main-content">
+    <!-- Empty state shown until JSON is loaded -->
+    <div class="empty-state" id="empty-state">
+        <h2>Nenhum relatório carregado</h2>
+        <p>Corre o pipeline e carrega o ficheiro JSON gerado, ou cola o output directamente abaixo.</p>
+        <div class="drop-zone" id="drop-zone">
+            <div class="icon">📄</div>
+            <label for="file-input"><strong>Clica para carregar o JSON</strong> ou arrasta o ficheiro aqui</label>
+            <div class="hint">Output de <code>python3 main.py --runner simple 2&gt;/dev/null</code></div>
+        </div>
+        <br>
+        <p style="font-size:12px; color:var(--text-muted);">Ou cola o JSON e clica em carregar:</p>
+        <div style="margin-top:10px;">
+            <textarea id="json-paste" style="width:100%;max-width:500px;height:100px;background:var(--bg-card);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:10px;font-size:12px;font-family:monospace;" placeholder='{"run_id":"...","top_opportunities":[...]}'></textarea>
+            <br>
+            <button class="btn-load" style="margin-top:8px;" onclick="loadPasted()">Carregar JSON colado</button>
+        </div>
+        <div style="margin-top:24px;">
+            <button class="btn-load" style="background:var(--accent2);" onclick="loadDemo()">🔬 Carregar dados de demo</button>
+        </div>
+    </div>
+
+    <!-- Dashboard (hidden until data loaded) -->
+    <div id="dashboard" style="display:none;">
+        <!-- KPIs -->
+        <div class="section-title">Resumo do Pipeline</div>
+        <div class="kpi-row" id="kpi-row"></div>
+
+        <!-- Charts row 1 -->
+        <div class="chart-row">
+            <div class="chart-card">
+                <h3>Score por Ativo</h3>
+                <canvas id="chart-scores"></canvas>
+            </div>
+            <div class="chart-card">
+                <h3>Distribuição de Direção</h3>
+                <canvas id="chart-direction"></canvas>
+            </div>
+        </div>
+
+        <!-- Charts row 2 -->
+        <div class="chart-row-3">
+            <div class="chart-card">
+                <h3>Move % (H1, 50 barras)</h3>
+                <canvas id="chart-move"></canvas>
+            </div>
+            <div class="chart-card">
+                <h3>Range % por Ativo</h3>
+                <canvas id="chart-range"></canvas>
+            </div>
+            <div class="chart-card">
+                <h3>Confiança Inicial</h3>
+                <canvas id="chart-confidence"></canvas>
+            </div>
+        </div>
+
+        <!-- Opportunity Cards -->
+        <div class="section-title" style="margin-top:4px;">Oportunidades Rankeadas</div>
+        <div class="opp-grid" id="opp-grid"></div>
+
+        <!-- Detailed Table -->
+        <div class="table-card">
+            <h3>Tabela Completa <span id="table-count" style="color:var(--text-muted);font-weight:400;"></span></h3>
+            <div id="opp-table"></div>
+        </div>
+
+        <!-- Monitoring + Info -->
+        <div class="monitoring-row">
+            <div class="info-card" id="monitoring-card">
+                <h3>⚙️ Execution Monitor (Crew 4)</h3>
+                <div id="monitoring-content"></div>
+            </div>
+            <div class="info-card" id="pipeline-info-card">
+                <h3>📋 Informação do Pipeline</h3>
+                <div id="pipeline-info"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<footer class="footer" id="footer" style="display:none;">
+    <span>⚠️ Research only — <strong>execution_enabled: false</strong> — requires_human_approval: true</span>
+    &nbsp;·&nbsp; <span id="footer-run-id"></span>
+</footer>
+
+<script>
+// ─── Colour palette ────────────────────────────────────────────────────────
+const C = {
+    blue:   '#4f8ef7',
+    green:  '#27c98b',
+    red:    '#f05c6e',
+    yellow: '#f5c842',
+    purple: '#7c5cbf',
+    orange: '#f5874a',
+    teal:   '#26c6da',
+};
+const PALETTE = Object.values(C);
+Chart.defaults.color = '#7b7f96';
+Chart.defaults.borderColor = '#2a2d3e';
+
+// ─── State ─────────────────────────────────────────────────────────────────
+let RAW = null;
+let FILTERED = [];
+let chartInstances = {};
+
+// ─── File / paste loaders ──────────────────────────────────────────────────
+function loadFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+        try { ingest(JSON.parse(ev.target.result)); }
+        catch(err) { alert('Erro ao parsear JSON: ' + err.message); }
+    };
+    reader.readAsText(file);
+}
+
+function loadPasted() {
+    const text = document.getElementById('json-paste').value.trim();
+    if (!text) return;
+    try { ingest(JSON.parse(text)); }
+    catch(err) { alert('Erro ao parsear JSON: ' + err.message); }
+}
+
+// ─── Drag & drop ───────────────────────────────────────────────────────────
+const dz = document.getElementById('drop-zone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+dz.addEventListener('drop', e => {
+    e.preventDefault(); dz.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+        try { ingest(JSON.parse(ev.target.result)); }
+        catch(err) { alert('Erro ao parsear JSON: ' + err.message); }
+    };
+    reader.readAsText(file);
+});
+
+// ─── Ingest pipeline JSON ──────────────────────────────────────────────────
+function ingest(data) {
+    // Support both direct report JSON and wrapped {"final_report": {...}}
+    RAW = data.final_report ? data.final_report : data;
+    if (!RAW.top_opportunities) {
+        alert('JSON inválido — campo top_opportunities não encontrado.');
+        return;
+    }
+    document.getElementById('empty-state').style.display = 'none';
+    document.getElementById('dashboard').style.display = 'block';
+    document.getElementById('footer').style.display = 'block';
+    renderAll();
+}
+
+// ─── Filters ───────────────────────────────────────────────────────────────
+function applyFilters() {
+    if (!RAW) return;
+    const dir = document.getElementById('filter-direction').value;
+    const dec = document.getElementById('filter-decision').value;
+    FILTERED = RAW.top_opportunities.filter(item => {
+        const opp = item.opportunity;
+        if (dir !== 'all' && opp.direction !== dir) return false;
+        if (dec !== 'all' && item.decision !== dec) return false;
+        return true;
+    });
+    renderKPIs();
+    updateCharts();
+    renderOppCards();
+    renderTable();
+}
+
+function renderAll() {
+    FILTERED = RAW.top_opportunities || [];
+    renderKPIs();
+    buildCharts();
+    renderOppCards();
+    renderTable();
+    renderMonitoring();
+    renderPipelineInfo();
+    const d = RAW.scan_date || RAW.generated_at || '';
+    document.getElementById('header-date').textContent = d ? `Scan: ${d}` : '';
+    document.getElementById('footer-run-id').textContent = `run_id: ${RAW.run_id || '—'}`;
+}
+
+// ─── KPIs ──────────────────────────────────────────────────────────────────
+function renderKPIs() {
+    const s = RAW.summary || {};
+    const n = FILTERED.length;
+    const watchCount = FILTERED.filter(i => i.decision === 'watch_for_entry').length;
+    const avgScore = n ? (FILTERED.reduce((a,i) => a + i.score, 0) / n).toFixed(2) : '—';
+    const top = FILTERED[0];
+
+    const kpis = [
+        { label:'Candidatos Scaneados', val: s.raw_candidates ?? '—', sub:'pelo cTrader H1', cls:'accent-blue' },
+        { label:'Aprovados para Review', val: s.approved_for_review ?? '—', sub:`de ${s.generated_opportunities ?? '—'} gerados`, cls:'accent-green' },
+        { label:'Watch for Entry', val: watchCount, sub:`score ≥ 7.0`, cls:'accent-green' },
+        { label:'Score Médio', val: avgScore, sub:'opportunities filtradas', cls:'accent-yellow' },
+        { label:'Top Ativo', val: top ? top.opportunity.asset : '—', sub: top ? `#1 · score ${top.score}` : 'nenhum', cls:'accent-purple' },
+    ];
+
+    document.getElementById('kpi-row').innerHTML = kpis.map(k => `
+        <div class="kpi-card ${k.cls}">
+            <div class="kpi-label">${k.label}</div>
+            <div class="kpi-value">${k.val}</div>
+            <div class="kpi-sub">${k.sub}</div>
+        </div>`).join('');
+}
+
+// ─── Charts ────────────────────────────────────────────────────────────────
+function destroyChart(id) {
+    if (chartInstances[id]) { chartInstances[id].destroy(); delete chartInstances[id]; }
+}
+
+function buildCharts() {
+    ['chart-scores','chart-direction','chart-move','chart-range','chart-confidence']
+        .forEach(destroyChart);
+
+    const data = FILTERED;
+    if (!data.length) return;
+
+    const assets = data.map(i => i.opportunity.asset);
+    const scores = data.map(i => i.score);
+    const moves  = data.map(i => Math.abs(parseFloat(i.opportunity.metrics?.move_pct || 0)));
+    const ranges = data.map(i => parseFloat(i.opportunity.metrics?.range_pct || 0));
+    const confs  = data.map(i => (i.opportunity.confidence_initial * 100).toFixed(1));
+    const colors = data.map(i => i.opportunity.direction === 'long' ? C.green : C.red);
+
+    // Score bar
+    chartInstances['chart-scores'] = new Chart(
+        document.getElementById('chart-scores').getContext('2d'), {
+        type: 'bar',
+        data: { labels: assets, datasets: [{ label: 'Score', data: scores, backgroundColor: colors.map(c => c+'cc'), borderColor: colors, borderWidth: 1, borderRadius: 5 }] },
+        options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false} }, scales:{ y:{ beginAtZero:true, max:14 } } }
+    });
+
+    // Direction doughnut
+    const longs  = data.filter(i => i.opportunity.direction === 'long').length;
+    const shorts = data.filter(i => i.opportunity.direction === 'short').length;
+    chartInstances['chart-direction'] = new Chart(
+        document.getElementById('chart-direction').getContext('2d'), {
+        type: 'doughnut',
+        data: { labels: ['Long','Short'], datasets: [{ data:[longs,shorts], backgroundColor:[C.green+'cc',C.red+'cc'], borderColor:[C.green,C.red], borderWidth:2 }] },
+        options: { responsive:true, maintainAspectRatio:false, cutout:'65%', plugins:{ legend:{ position:'bottom' } } }
+    });
+
+    // Move %
+    chartInstances['chart-move'] = new Chart(
+        document.getElementById('chart-move').getContext('2d'), {
+        type: 'bar',
+        data: { labels: assets, datasets: [{ label:'|Move %|', data: moves, backgroundColor: C.blue+'99', borderColor: C.blue, borderWidth:1, borderRadius:5 }] },
+        options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ y:{ beginAtZero:true, ticks:{ callback: v => v.toFixed(2)+'%' } } } }
+    });
+
+    // Range %
+    chartInstances['chart-range'] = new Chart(
+        document.getElementById('chart-range').getContext('2d'), {
+        type: 'bar',
+        data: { labels: assets, datasets: [{ label:'Range %', data: ranges, backgroundColor: C.purple+'99', borderColor: C.purple, borderWidth:1, borderRadius:5 }] },
+        options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ y:{ beginAtZero:true, ticks:{ callback: v => v.toFixed(2)+'%' } } } }
+    });
+
+    // Confidence
+    chartInstances['chart-confidence'] = new Chart(
+        document.getElementById('chart-confidence').getContext('2d'), {
+        type: 'bar',
+        data: { labels: assets, datasets: [{ label:'Confiança %', data: confs, backgroundColor: C.yellow+'99', borderColor: C.yellow, borderWidth:1, borderRadius:5 }] },
+        options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ y:{ beginAtZero:false, min:50, max:100, ticks:{ callback: v => v+'%' } } } }
+    });
+}
+
+function updateCharts() { buildCharts(); }
+
+// ─── Opportunity Cards ──────────────────────────────────────────────────────
+function renderOppCards() {
+    const container = document.getElementById('opp-grid');
+    if (!FILTERED.length) { container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">Nenhuma oportunidade com os filtros actuais.</p>'; return; }
+
+    container.innerHTML = FILTERED.map(item => {
+        const opp = item.opportunity;
+        const m = opp.metrics || {};
+        const movePct = parseFloat(m.move_pct || 0);
+        const moveAbs = Math.abs(movePct).toFixed(3);
+        const rangePct = parseFloat(m.range_pct || 0).toFixed(3);
+        const lbPct = parseFloat(m.last_bar_move_pct || 0).toFixed(3);
+        const scoreColor = item.score >= 9 ? 'score-green' : item.score >= 7 ? 'score-green' : 'score-yellow';
+        const decBadge = item.decision === 'watch_for_entry'
+            ? `<span class="badge badge-green"><span class="badge-dot"></span>WATCH</span>`
+            : `<span class="badge badge-yellow"><span class="badge-dot"></span>REVIEW</span>`;
+        const confVal = (opp.confidence_initial * 100).toFixed(0);
+        const approvalBadge = opp.requires_human_approval ? `<span class="badge badge-red">👤 HUMAN</span>` : '';
+        const chartBadge = opp.requires_chart_validation ? `<span class="badge badge-blue">📈 CHART</span>` : '';
+
+        return `
+        <div class="opp-card ${opp.direction}" onclick="this.classList.toggle('expanded')">
+            <div class="opp-header">
+                <div>
+                    <div class="opp-asset">${opp.asset}</div>
+                    <div class="opp-rank">Rank #${item.rank} · ${opp.market}</div>
+                </div>
+                <div style="text-align:right;">
+                    <div class="opp-score ${scoreColor}">${item.score}</div>
+                    <div style="font-size:10px;color:var(--text-muted);">score</div>
+                </div>
+            </div>
+
+            <div class="opp-direction dir-${opp.direction}">
+                ${opp.direction === 'long' ? '▲ LONG' : '▼ SHORT'} · ${opp.timeframe} · ${opp.setup_type}
+            </div>
+
+            <div class="opp-thesis">${opp.thesis}</div>
+
+            <div class="opp-metrics">
+                <div class="metric-box">
+                    <div class="label">MOVE %</div>
+                    <div class="val" style="color:${movePct >= 0 ? 'var(--green)' : 'var(--red)'}">
+                        ${movePct >= 0 ? '+' : ''}${moveAbs}%
+                    </div>
+                </div>
+                <div class="metric-box">
+                    <div class="label">RANGE %</div>
+                    <div class="val">${rangePct}%</div>
+                </div>
+                <div class="metric-box">
+                    <div class="label">CONF.</div>
+                    <div class="val">${confVal}%</div>
+                </div>
+                <div class="metric-box">
+                    <div class="label">LAST BAR</div>
+                    <div class="val" style="color:${parseFloat(lbPct) >= 0 ? 'var(--green)' : 'var(--red)'}">
+                        ${parseFloat(lbPct) >= 0 ? '+' : ''}${lbPct}%
+                    </div>
+                </div>
+                <div class="metric-box" style="grid-column:span 2;">
+                    <div class="label">CATALYST</div>
+                    <div class="val" style="font-size:11px;font-family:sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${(opp.catalyst||'—').substring(0,40)}</div>
+                </div>
+            </div>
+
+            <div class="opp-why">${item.why}</div>
+            <div class="opp-tags" style="margin-top:10px;">
+                ${decBadge} ${approvalBadge} ${chartBadge}
+            </div>
+        </div>`;
+    }).join('');
+}
+
+// ─── Table ─────────────────────────────────────────────────────────────────
+let tableSortCol = 'score';
+let tableSortDir = 'desc';
+
+function renderTable() {
+    const data = [...FILTERED].sort((a, b) => {
+        let av, bv;
+        switch(tableSortCol) {
+            case 'score': av = a.score; bv = b.score; break;
+            case 'asset': av = a.opportunity.asset; bv = b.opportunity.asset; break;
+            case 'direction': av = a.opportunity.direction; bv = b.opportunity.direction; break;
+            case 'move': av = Math.abs(parseFloat(a.opportunity.metrics?.move_pct||0)); bv = Math.abs(parseFloat(b.opportunity.metrics?.move_pct||0)); break;
+            case 'range': av = parseFloat(a.opportunity.metrics?.range_pct||0); bv = parseFloat(b.opportunity.metrics?.range_pct||0); break;
+            case 'conf': av = a.opportunity.confidence_initial; bv = b.opportunity.confidence_initial; break;
+            default: av = a.score; bv = b.score;
+        }
+        const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+        return tableSortDir === 'asc' ? cmp : -cmp;
+    });
+
+    document.getElementById('table-count').textContent = `(${data.length})`;
+    const cols = [
+        { field:'asset', label:'Ativo' },
+        { field:'direction', label:'Dir.' },
+        { field:'score', label:'Score ↕' },
+        { field:'move', label:'|Move %|' },
+        { field:'range', label:'Range %' },
+        { field:'conf', label:'Confiança' },
+        { field:'decision', label:'Decisão' },
+    ];
+
+    let html = '<table><thead><tr>';
+    cols.forEach(c => {
+        const arrow = tableSortCol === c.field ? (tableSortDir === 'asc' ? ' ▲' : ' ▼') : '';
+        html += `<th onclick="sortTable('${c.field}')">${c.label}${arrow}</th>`;
+    });
+    html += '<th>Setup</th><th>Catalyst</th></tr></thead><tbody>';
+
+    data.forEach(item => {
+        const opp = item.opportunity;
+        const m = opp.metrics || {};
+        const movePct = parseFloat(m.move_pct || 0);
+        const scoreColor = item.score >= 9 ? 'var(--green)' : item.score >= 7 ? 'var(--yellow)' : 'var(--text)';
+        const decClass = item.decision === 'watch_for_entry' ? 'td-watch' : 'td-review';
+        html += `<tr>
+            <td class="td-asset">${opp.asset}</td>
+            <td class="td-${opp.direction}">${opp.direction === 'long' ? '▲ L' : '▼ S'}</td>
+            <td class="td-score" style="color:${scoreColor}">${item.score}</td>
+            <td>${Math.abs(movePct).toFixed(3)}%</td>
+            <td>${parseFloat(m.range_pct||0).toFixed(3)}%</td>
+            <td>${(opp.confidence_initial*100).toFixed(0)}%</td>
+            <td class="${decClass}">${item.decision === 'watch_for_entry' ? '✅ Watch' : '🟡 Review'}</td>
+            <td style="color:var(--text-muted);max-width:120px;overflow:hidden;text-overflow:ellipsis;">${opp.setup_type}</td>
+            <td style="color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;">${(opp.catalyst||'—').substring(0,60)}</td>
+        </tr>`;
+    });
+
+    html += '</tbody></table>';
+    document.getElementById('opp-table').innerHTML = html;
+}
+
+window.sortTable = function(field) {
+    if (tableSortCol === field) tableSortDir = tableSortDir === 'asc' ? 'desc' : 'asc';
+    else { tableSortCol = field; tableSortDir = 'desc'; }
+    renderTable();
+};
+
+// ─── Monitoring ────────────────────────────────────────────────────────────
+function renderMonitoring() {
+    const mon = RAW.monitoring || {};
+    const actions = mon.actions || [];
+    let html = '';
+    if (!actions.length) {
+        html = '<p style="font-size:12px;color:var(--text-muted);">Sem dados de monitorização.</p>';
+    } else {
+        html = actions.map(a => `
+            <div class="info-row">
+                <span class="info-key">${a.status || 'status'}</span>
+                <span class="info-val" style="font-family:sans-serif;font-size:11px;max-width:220px;text-align:right;color:var(--text-muted);">${a.message || ''}</span>
+            </div>`).join('');
+        html += `<div class="info-row"><span class="info-key">Open positions</span><span class="info-val">${mon.open_positions_count ?? 0}</span></div>`;
+    }
+
+    const journal = RAW.post_trade_journal || {};
+    if (journal.status === 'no_closed_trade') {
+        html += `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+            <div style="font-size:11px;color:var(--text-muted);">📓 Post-Trade Journal (Crew 5): sem trade fechado para rever.</div>
+        </div>`;
+    } else if (journal.asset) {
+        html += `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+            <div style="font-size:12px;font-weight:600;margin-bottom:6px;">📓 Post-Trade: ${journal.asset}</div>
+            <div class="info-row"><span class="info-key">Outcome</span><span class="info-val">${journal.outcome||'—'}</span></div>
+        </div>`;
+    }
+
+    document.getElementById('monitoring-content').innerHTML = html;
+}
+
+// ─── Pipeline Info ──────────────────────────────────────────────────────────
+function renderPipelineInfo() {
+    const dp = RAW.data_provider || {};
+    const s  = RAW.summary || {};
+    const rows = [
+        ['Provider',         dp.provider || dp.runtime_provider_used || '—'],
+        ['Período cTrader',  dp.ctrader_selected_period || '—'],
+        ['Scan date',        RAW.scan_date || '—'],
+        ['Candidatos raw',   s.raw_candidates ?? '—'],
+        ['Pesquisados',      s.researched ?? '—'],
+        ['Oportunidades',    s.generated_opportunities ?? '—'],
+        ['Aprovados',        s.approved_for_review ?? '—'],
+        ['Rejeitados',       s.rejected ?? '—'],
+        ['Execution enabled','❌ false'],
+        ['Human approval',   '✅ required'],
+    ];
+    document.getElementById('pipeline-info').innerHTML = rows.map(([k,v]) =>
+        `<div class="info-row"><span class="info-key">${k}</span><span class="info-val">${v}</span></div>`
+    ).join('');
+}
+
+// ─── Demo data ──────────────────────────────────────────────────────────────
+function loadDemo() {
+    const demo = {
+      run_id: "demo-run-001",
+      scan_date: new Date().toISOString().split('T')[0],
+      opportunities_count: 4,
+      top_opportunity: "XAUUSD",
+      mode: "autonomous_research_no_execution",
+      data_provider: { provider: "ctrader", ctrader_selected_period: "H1_50bars" },
+      summary: { raw_candidates:4, researched:4, generated_opportunities:4, approved_for_review:4, rejected:0 },
+      top_opportunities: [
+        { rank:1, score:10.84, decision:"watch_for_entry", why:"Watchlist: movimento forte (0.697%); range amplo (2.030%). Pendente validação humana/gráfico.",
+          opportunity:{ asset:"XAUUSD", market:"ctrader", direction:"long", setup_type:"momentum_breakout", timeframe:"H1", confidence_initial:0.75, catalyst:"Momentum bullish em H1; 50 barras com move de +0.697%", thesis:"XAUUSD mostra momentum bullish forte nos dados H1 do cTrader com move de 0.697% e range amplo de 2.030%.", counter_thesis:"Ouro sujeito a reversão após movimentos rápidos; risco de falso breakout.", entry_logic:"Entrada acima do máximo recente.", stop_logic:"Stop abaixo do último swing low.", target_logic:"Projecção de 1.5x o range.", requires_human_approval:true, requires_chart_validation:true, metrics:{ move_pct:0.697, last_bar_move_pct:0.102, range_pct:2.030, scan_score:3.5 } } },
+        { rank:2, score:9.62, decision:"watch_for_entry", why:"Watchlist: movimento forte (0.482%); range amplo (1.450%). Pendente validação humana/gráfico.",
+          opportunity:{ asset:"GBPUSD", market:"ctrader", direction:"long", setup_type:"trend_continuation", timeframe:"H1", confidence_initial:0.72, catalyst:"GBP recupera vs USD; momentum positivo em H1.", thesis:"GBPUSD em tendência ascendente no H1 com move de +0.482%.", counter_thesis:"Possível resistência nos máximos de semana anterior.", entry_logic:"Entrada em pullback para EMA20.", stop_logic:"Stop abaixo da EMA50.", target_logic:"Target no próximo nível de resistência.", requires_human_approval:true, requires_chart_validation:true, metrics:{ move_pct:0.482, last_bar_move_pct:-0.05, range_pct:1.450, scan_score:2.8 } } },
+        { rank:3, score:8.75, decision:"watch_for_entry", why:"Watchlist: movimento forte (0.310%); range amplo (1.120%). Pendente validação humana/gráfico.",
+          opportunity:{ asset:"EURUSD", market:"ctrader", direction:"long", setup_type:"support_bounce", timeframe:"H1", confidence_initial:0.68, catalyst:"EUR/USD rebate em suporte chave; sinais de reversão H1.", thesis:"EURUSD mostra sinais de reversão bullish após toque em suporte.", counter_thesis:"Tendência maior ainda descendente; possível armadilha de touro.", entry_logic:"Entrada com confirmação de candle bullish.", stop_logic:"Stop abaixo do suporte.", target_logic:"Target na resistência intermédia.", requires_human_approval:true, requires_chart_validation:true, metrics:{ move_pct:0.310, last_bar_move_pct:0.08, range_pct:1.120, scan_score:2.1 } } },
+        { rank:4, score:7.30, decision:"review_manually", why:"Watchlist: movimento forte (0.421%); último candle contra a direção (penalização). Pendente validação humana/gráfico.",
+          opportunity:{ asset:"USDJPY", market:"ctrader", direction:"short", setup_type:"breakdown_continuation", timeframe:"H1", confidence_initial:0.65, catalyst:"USD/JPY em queda; momentum bearish em H1 com move de -0.421%.", thesis:"USDJPY mostra fraqueza com move negativo de -0.421% nas últimas 50 barras H1.", counter_thesis:"JPY pode reverter com intervenção do BOJ.", entry_logic:"Entrada em retração para resistência.", stop_logic:"Stop acima do último swing high.", target_logic:"Target no próximo suporte.", requires_human_approval:true, requires_chart_validation:true, metrics:{ move_pct:-0.421, last_bar_move_pct:0.15, range_pct:0.980, scan_score:1.9 } } },
+      ],
+      rejected: [],
+      rules: { execution_enabled:false, human_approval_required:true, chart_validation_required:true },
+      monitoring: { open_positions_count:0, actions:[{ status:"no_open_positions", message:"Execution monitor: no open positions to review.", requires_human_review:true }] },
+      post_trade_journal: { status:"no_closed_trade", message:"Post-trade review: no closed trade to analyse." },
+      errors: []
+    };
+    ingest(demo);
+}
+</script>
+</body>
+</html>

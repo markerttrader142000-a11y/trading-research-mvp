@@ -1,0 +1,77 @@
+markets:
+  - stocks
+  - forex
+  - indices
+  - commodities
+
+timeframe: intraday_or_swing
+max_candidates: 10
+max_final_opportunities: 5
+
+risk:
+  min_confidence: 0.55
+  min_rr: 1.5
+  execution_enabled: false
+  require_human_approval: true
+  require_chart_validation: true
+
+models:
+  mode: mistral           # mock | mistral | anthropic | openai | perplexity | gemini
+  scanner: mock           # scanner stays deterministic (no LLM needed)
+  research: mistral       # Crew 1 — Research Synthesizer
+  analysis: mistral       # Crew 2 + 3 — Setup Validation + Trade Plan
+  structuring: mistral    # Crew 3 — Trade Plan formatter
+
+storage:
+  sqlite_path: data/runs.db
+
+data:
+  provider: ctrader  # auto | mock | alpaca | ctrader
+  alpaca:
+    paper: true
+    trading_endpoint: https://paper-api.alpaca.markets/v2
+    account_label: trading-bots
+    account_id_hint: PA30WVXBX8B
+    feed: iex
+    timeframe: 1Day
+    lookback_days: 30
+    max_symbols: 20
+    min_abs_move_pct: 1.0
+    symbols:
+      - SPY
+      - QQQ
+      - DIA
+      - IWM
+      - AAPL
+      - MSFT
+      - NVDA
+      - TSLA
+      - AMZN
+      - META
+    credential_paths:
+      - .env
+      - ~/.env
+      - ~/trading/alpaca_config.json
+      - ~/.config/alpaca
+  ctrader:
+    environment: demo
+    redirect_uri: http://localhost:8080/callback
+    scope: accounts
+    token_path: .ctrader_tokens.json
+    default_account_id:
+    trendbar_period: H1
+    fallback_periods:
+      - H1
+      - M30
+      - H4
+    trendbar_count: 50
+    min_abs_move_pct: 0.15
+    min_range_pct: 0.25
+    symbol_names:
+      - EURUSD
+      - GBPUSD
+      - USDJPY
+      - XAUUSD
+    credential_paths:
+      - .env
+      - ~/.env
