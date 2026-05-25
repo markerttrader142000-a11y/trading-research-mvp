@@ -1,14 +1,13 @@
 """
-LLM Direct — Mistral via LiteLLM + Perplexity real-time search
----------------------------------------------------------------
-Pipeline de research em dois passos:
-  1. Perplexity (se PERPLEXITY_API_KEY disponível) — busca notícias reais,
-     catalisadores e eventos macro em tempo real.
-  2. Mistral — sintetiza os dados do Perplexity + métricas do scanner em
-     ResearchItem / TradeOpportunity estruturado.
+LLM Direct — Mistral + GPT-4.1-nano fallback + Perplexity real-time search
+---------------------------------------------------------------------------
+Pipeline de research em três camadas:
+  1. Perplexity sonar      — busca notícias reais em tempo real (opcional)
+  2. Mistral small         — síntese JSON principal (rápido, económico)
+  3. GPT-4.1-nano fallback — activa automaticamente quando Mistral dá 503/429
 
-Se o Perplexity não estiver configurado, o Mistral usa apenas os dados
-do scanner cTrader (comportamento original).
+Hierarquia de fallback por chamada LLM:
+  _call_llm() → tenta Mistral → se falhar, tenta GPT-4.1-nano → se falhar, ""
 
 Funções públicas (mesma assinatura das crews):
   run_research_direct(candidates, config) -> List[ResearchItem]
@@ -55,47 +54,85 @@ def _fetch_perplexity_context(candidate: MarketCandidate) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# LiteLLM caller
+# LiteLLM callers — Mistral primary, GPT-4.1-nano fallback
 # ---------------------------------------------------------------------------
 
-def _call_mistral(prompt: str, config: dict) -> str:
-    """
-    Calls Mistral via LiteLLM. Returns the response text.
-    Falls back to empty string on error.
-    """
-    try:
-        import litellm  # noqa: PLC0415
+_SYSTEM_PROMPT = (
+    "You are a professional trading research analyst. "
+    "Always respond with valid JSON only — no prose, no markdown fences. "
+    "Your JSON must be parseable by Python json.loads()."
+)
 
+
+def _call_mistral(prompt: str, config: dict) -> str:
+    """Calls Mistral small via LiteLLM. Returns text or empty string on error."""
+    try:
+        import litellm
         api_key = os.environ.get("MISTRAL_API_KEY", "")
         if not api_key:
             return ""
-
         model = os.environ.get("CREWAI_LLM_MODEL", "mistral/mistral-small-latest")
         if not model.startswith("mistral/"):
             model = f"mistral/{model}"
-
         response = litellm.completion(
             model=model,
             api_key=api_key,
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a professional trading research analyst. "
-                        "Always respond with valid JSON only — no prose, no markdown fences. "
-                        "Your JSON must be parseable by Python json.loads()."
-                    ),
-                },
+                {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.2,
             max_tokens=1024,
         )
         return str(response.choices[0].message.content or "")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         import sys
-        print(f"[llm_direct] WARNING: Mistral call failed: {exc}", file=sys.stderr)
+        print(f"[llm_direct] Mistral failed: {exc}", file=sys.stderr)
         return ""
+
+
+def _call_nano(prompt: str) -> str:
+    """Calls GPT-4.1-nano via LiteLLM. Returns text or empty string on error."""
+    try:
+        import litellm
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            return ""
+        response = litellm.completion(
+            model="gpt-4.1-nano",
+            api_key=api_key,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.2,
+            max_tokens=1024,
+        )
+        return str(response.choices[0].message.content or "")
+    except Exception as exc:
+        import sys
+        print(f"[llm_direct] GPT-4.1-nano failed: {exc}", file=sys.stderr)
+        return ""
+
+
+def _call_llm(prompt: str, config: dict) -> str:
+    """
+    Primary entry point for all LLM calls in this module.
+    Tries Mistral first — falls back to GPT-4.1-nano automatically.
+
+    Fallback triggers:
+      - MISTRAL_API_KEY not set
+      - Mistral returns 503 / 429 / any error
+      - Mistral returns empty string
+    """
+    result = _call_mistral(prompt, config)
+    if result:
+        return result
+
+    # Fallback to GPT-4.1-nano
+    import sys
+    print("[llm_direct] Falling back to GPT-4.1-nano...", file=sys.stderr)
+    return _call_nano(prompt)
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +235,7 @@ def run_research_direct(
             "Return ONLY the JSON object. No explanation, no markdown."
         )
 
-        raw = _call_mistral(prompt, config)
+        raw = _call_llm(prompt, config)
         data = _parse_json(raw) if raw else {}
 
         if data:
@@ -308,7 +345,7 @@ def run_trade_plan_direct(
         "Return ONLY the JSON object. No explanation, no markdown."
     )
 
-    raw = _call_mistral(prompt, config)
+    raw = _call_llm(prompt, config)
     data = _parse_json(raw) if raw else {}
 
     direction = str(data.get("direction", _infer_direction(research))).lower()
