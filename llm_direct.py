@@ -1,8 +1,14 @@
 """
-LLM Direct — Mistral via LiteLLM (sem CrewAI)
------------------------------------------------
-Fallback para quando o CrewAI não está disponível (ex: Python 3.9).
-Chama o Mistral directamente via LiteLLM com prompts estruturados JSON.
+LLM Direct — Mistral via LiteLLM + Perplexity real-time search
+---------------------------------------------------------------
+Pipeline de research em dois passos:
+  1. Perplexity (se PERPLEXITY_API_KEY disponível) — busca notícias reais,
+     catalisadores e eventos macro em tempo real.
+  2. Mistral — sintetiza os dados do Perplexity + métricas do scanner em
+     ResearchItem / TradeOpportunity estruturado.
+
+Se o Perplexity não estiver configurado, o Mistral usa apenas os dados
+do scanner cTrader (comportamento original).
 
 Funções públicas (mesma assinatura das crews):
   run_research_direct(candidates, config) -> List[ResearchItem]
@@ -16,6 +22,36 @@ import re
 from typing import List, Optional
 
 from schemas import MarketCandidate, ResearchItem, TradeOpportunity
+
+
+# ---------------------------------------------------------------------------
+# Perplexity enrichment (optional — graceful no-op if key not set)
+# ---------------------------------------------------------------------------
+
+def _fetch_perplexity_context(candidate: MarketCandidate) -> dict:
+    """
+    Fetches real-time news context from Perplexity for a candidate.
+    Returns a dict with keys: summary, catalysts, risks, macro_events, sources.
+    Returns empty dict if Perplexity is unavailable or the call fails.
+    """
+    try:
+        from perplexity_search import search_market_news, is_available
+        if not is_available():
+            return {}
+        result = search_market_news(candidate.asset, market=candidate.market)
+        if not result.success:
+            return {}
+        return {
+            "perplexity_summary": result.summary,
+            "perplexity_catalysts": result.catalysts,
+            "perplexity_risks": result.risks,
+            "perplexity_macro_events": result.macro_events,
+            "perplexity_sources": result.sources,
+        }
+    except Exception as exc:
+        import sys
+        print(f"[llm_direct] Perplexity enrichment skipped: {exc}", file=sys.stderr)
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +147,10 @@ def run_research_direct(
         metrics = candidate.metrics or {}
         metrics_str = json.dumps(metrics) if metrics else "none"
 
+        # Step 1 — Perplexity: fetch real-time news context (optional)
+        pctx = _fetch_perplexity_context(candidate)
+        has_perplexity = bool(pctx)
+
         # Build a human-readable metrics note for the prompt
         metrics_note = ""
         if metrics.get("move_pct") is not None:
@@ -122,23 +162,39 @@ def run_research_direct(
                 f"  Period: {metrics.get('period', 'unknown')}"
             )
 
+        # Step 2 — Build Perplexity context block for the Mistral prompt
+        perplexity_block = ""
+        if has_perplexity:
+            perplexity_block = (
+                f"\nReal-time news context from Perplexity (use this in your analysis):\n"
+                f"  News summary: {pctx.get('perplexity_summary', '')[:300]}\n"
+                f"  Live catalysts: {pctx.get('perplexity_catalysts', [])}\n"
+                f"  Live risks: {pctx.get('perplexity_risks', [])}\n"
+                f"  Macro events: {pctx.get('perplexity_macro_events', [])}\n"
+                f"  Sources: {pctx.get('perplexity_sources', [])}"
+            )
+
+        # Step 3 — Mistral: synthesise everything into structured ResearchItem
         prompt = (
             f"Research this trading candidate and return ONLY a JSON object.\n\n"
             f"Asset: {candidate.asset}\n"
             f"Market: {candidate.market}\n"
             f"Reason selected: {candidate.reason}\n"
             f"Raw metrics: {metrics_str}"
-            f"{metrics_note}\n\n"
+            f"{metrics_note}"
+            f"{perplexity_block}\n\n"
             "Required JSON keys:\n"
-            '  "macro_summary": string — 2-3 sentence research summary that references the '
-            'specific price-action metrics above (move %, range) when available\n'
+            '  "macro_summary": string — 2-3 sentence research summary that integrates '
+            'the real-time news context (if provided) AND references the specific '
+            'price-action metrics above (move %, range) when available\n'
             '  "bullish_factors": list of 2-3 strings\n'
             '  "bearish_factors": list of 2-3 strings\n'
-            '  "catalysts": list of 1-2 strings\n'
-            '  "macro_events": list of strings (can be empty)\n'
+            '  "catalysts": list of 1-2 strings (prefer real news catalysts if available)\n'
+            '  "macro_events": list of strings (upcoming events that could impact price)\n'
             '  "news_risks": list of 1-2 strings\n'
-            '  "sources": list of strings (data sources used)\n'
-            '  "source_quality_score": float between 0.0 and 1.0\n\n'
+            '  "sources": list of strings (data sources used, include Perplexity sources)\n'
+            '  "source_quality_score": float between 0.0 and 1.0 '
+            '(use 0.9 if real news was available, 0.7 if price-action only)\n\n'
             "Return ONLY the JSON object. No explanation, no markdown."
         )
 
@@ -146,6 +202,15 @@ def run_research_direct(
         data = _parse_json(raw) if raw else {}
 
         if data:
+            # Merge Perplexity sources with Mistral sources
+            mistral_sources = _to_list(data.get("sources"), ["Mistral AI research"])
+            perplexity_sources = pctx.get("perplexity_sources", []) if has_perplexity else []
+            all_sources = list(dict.fromkeys(mistral_sources + perplexity_sources))  # deduplicate
+
+            # Use higher quality score when real news was available
+            base_quality = float(data.get("source_quality_score", 0.75))
+            quality = max(base_quality, 0.88) if has_perplexity else base_quality
+
             item = ResearchItem(
                 asset=candidate.asset,
                 market=candidate.market,
@@ -153,18 +218,37 @@ def run_research_direct(
                 bullish_factors=_to_list(data.get("bullish_factors"), ["LLM flagged as candidate."]),
                 bearish_factors=_to_list(data.get("bearish_factors"), ["Review crew output."]),
                 catalysts=_to_list(data.get("catalysts"), [candidate.reason]),
-                macro_events=_to_list(data.get("macro_events"), []),
+                macro_events=_to_list(data.get("macro_events"), pctx.get("perplexity_macro_events", [])),
                 news_risks=_to_list(data.get("news_risks"), []),
-                sources=_to_list(data.get("sources"), ["Mistral AI research"]),
-                source_quality_score=float(data.get("source_quality_score", 0.75)),
+                sources=all_sources[:6],
+                source_quality_score=round(quality, 3),
             )
         else:
-            # Graceful fallback to price-action mock
-            item = _mock_research_item(candidate)
+            # Graceful fallback: use Perplexity data directly if Mistral failed
+            if has_perplexity:
+                item = _perplexity_fallback_item(candidate, pctx)
+            else:
+                item = _mock_research_item(candidate)
 
         items.append(item)
 
     return items
+
+
+def _perplexity_fallback_item(candidate: MarketCandidate, pctx: dict) -> ResearchItem:
+    """Builds a ResearchItem from Perplexity data when Mistral fails."""
+    return ResearchItem(
+        asset=candidate.asset,
+        market=candidate.market,
+        summary=pctx.get("perplexity_summary", f"{candidate.asset} — Perplexity research."),
+        bullish_factors=pctx.get("perplexity_catalysts", ["Perplexity flagged as candidate."])[:3],
+        bearish_factors=pctx.get("perplexity_risks", ["No Mistral synthesis available."])[:3],
+        catalysts=pctx.get("perplexity_catalysts", [candidate.reason])[:2],
+        macro_events=pctx.get("perplexity_macro_events", []),
+        news_risks=pctx.get("perplexity_risks", [])[:2],
+        sources=pctx.get("perplexity_sources", ["Perplexity AI"]),
+        source_quality_score=0.82,
+    )
 
 
 def _mock_research_item(candidate: MarketCandidate) -> ResearchItem:
