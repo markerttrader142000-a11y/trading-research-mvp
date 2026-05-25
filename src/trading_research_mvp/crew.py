@@ -21,8 +21,28 @@ Uso:
 """
 from __future__ import annotations
 
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+
 from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
+
+def _nano_llm():
+    """GPT-4.1-nano for fast specialist agents. Falls back to Mistral if no OpenAI key."""
+    try:
+        from agents.llm_factory import make_llm
+        return make_llm(provider="nano")
+    except Exception:
+        return None
+
+def _mistral_llm():
+    """Mistral small for synthesis agents."""
+    try:
+        from agents.llm_factory import make_llm
+        return make_llm(provider="mistral")
+    except Exception:
+        return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -41,21 +61,39 @@ class ResearchSynthesizerCrew:
     agents_config = "config/agents.yaml"
     tasks_config  = "config/tasks.yaml"
 
+    # ── Tier 2: Mistral small — synthesis agents ──────────────
     @agent
     def macro_research_analyst(self) -> Agent:
         return Agent(config=self.agents_config["macro_research_analyst"],  # type: ignore[index]
-                     verbose=False, allow_delegation=False)
+                     llm=_mistral_llm(), verbose=False, allow_delegation=False)
 
     @agent
     def market_context_analyst(self) -> Agent:
         return Agent(config=self.agents_config["market_context_analyst"],  # type: ignore[index]
-                     verbose=False, allow_delegation=False)
+                     llm=_mistral_llm(), verbose=False, allow_delegation=False)
 
     @agent
     def contrarian_checker(self) -> Agent:
         return Agent(config=self.agents_config["contrarian_checker"],  # type: ignore[index]
-                     verbose=False, allow_delegation=False)
+                     llm=_mistral_llm(), verbose=False, allow_delegation=False)
 
+    # ── Tier 3: GPT-4.1-nano — specialist agents ─────────────
+    @agent
+    def sentiment_scorer(self) -> Agent:
+        return Agent(config=self.agents_config["sentiment_scorer"],  # type: ignore[index]
+                     llm=_nano_llm(), verbose=False, allow_delegation=False)
+
+    @agent
+    def news_impact_assessor(self) -> Agent:
+        return Agent(config=self.agents_config["news_impact_assessor"],  # type: ignore[index]
+                     llm=_nano_llm(), verbose=False, allow_delegation=False)
+
+    @agent
+    def technical_validator(self) -> Agent:
+        return Agent(config=self.agents_config["technical_validator"],  # type: ignore[index]
+                     llm=_nano_llm(), verbose=False, allow_delegation=False)
+
+    # ── Tasks ─────────────────────────────────────────────────
     @task
     def research_macro_task(self) -> Task:
         return Task(config=self.tasks_config["research_macro_task"])  # type: ignore[index]
@@ -68,11 +106,23 @@ class ResearchSynthesizerCrew:
     def research_contrarian_task(self) -> Task:
         return Task(config=self.tasks_config["research_contrarian_task"])  # type: ignore[index]
 
+    @task
+    def sentiment_scoring_task(self) -> Task:
+        return Task(config=self.tasks_config["sentiment_scoring_task"])  # type: ignore[index]
+
+    @task
+    def news_impact_task(self) -> Task:
+        return Task(config=self.tasks_config["news_impact_task"])  # type: ignore[index]
+
+    @task
+    def technical_validation_task(self) -> Task:
+        return Task(config=self.tasks_config["technical_validation_task"])  # type: ignore[index]
+
     @crew
     def crew(self) -> Crew:
         return Crew(
-            agents=self.agents,    # auto-populated by @agent decorators
-            tasks=self.tasks,      # auto-populated by @task decorators
+            agents=self.agents,
+            tasks=self.tasks,
             process=Process.sequential,
             verbose=False,
         )

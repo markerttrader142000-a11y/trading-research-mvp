@@ -3,35 +3,26 @@ LLM Factory
 -----------
 Single place to configure which LLM provider each agent uses.
 
+Cost hierarchy (cheapest → most capable):
+  Tier 1 — Perplexity sonar    : real-time news fetch (perplexity_search.py)
+  Tier 2 — Mistral small       : JSON synthesis, research items  (MISTRAL_API_KEY)
+  Tier 3 — GPT-4.1-nano        : fast reasoning agents — sentiment, news impact,
+                                  technical validation            (OPENAI_API_KEY)
+  Tier 4 — GPT-4.1-mini        : complex trade plans             (OPENAI_API_KEY)
+  Tier 5 — Claude Sonnet / GPT-4o : reserved for critical decisions
+
+Agent assignment:
+  make_llm()                    → auto-detect from env (Mistral preferred)
+  make_llm(provider="mistral")  → Mistral small (synthesis)
+  make_llm(provider="nano")     → GPT-4.1-nano  (sentiment/impact/validation agents)
+  make_llm(provider="mini")     → GPT-4.1-mini  (trade planner)
+  make_llm(provider="openai")   → GPT-4o        (fallback)
+
 Priority order for provider resolution:
   1. explicit provider argument
   2. CREWAI_LLM_PROVIDER env var
   3. auto-detect from available API keys
   4. mock (no API calls)
-
-Supported providers:
-  - mock        : no API calls, structured placeholders (default)
-  - mistral     : Mistral AI  (MISTRAL_API_KEY)
-  - anthropic   : Claude      (ANTHROPIC_API_KEY)
-  - openai      : ChatGPT     (OPENAI_API_KEY)
-  - perplexity  : Perplexity  (PERPLEXITY_API_KEY)  via LiteLLM
-  - gemini      : Gemini      (GEMINI_API_KEY)       via LiteLLM
-  - grok        : xAI Grok    (XAI_API_KEY)          via LiteLLM
-  - deepseek    : DeepSeek    (DEEPSEEK_API_KEY)     via LiteLLM
-
-Default models per provider (override with CREWAI_LLM_MODEL env var):
-  mistral    → mistral-small-latest   (free tier, fast, good JSON)
-  anthropic  → claude-sonnet-4-6
-  openai     → gpt-4o
-  perplexity → perplexity/sonar-pro
-  gemini     → gemini/gemini-1.5-pro
-  grok       → openai/grok-3
-  deepseek   → deepseek/deepseek-chat
-
-Usage:
-  llm = make_llm()                       # auto-resolves from env
-  llm = make_llm(provider="mistral")     # force provider
-  llm = make_llm(model="mistral-medium") # force model
 """
 from __future__ import annotations
 
@@ -227,6 +218,44 @@ def _make_openai(model: Optional[str] = None):
         return None
 
 
+def _make_nano(model: Optional[str] = None):
+    """GPT-4.1-nano — cheapest OpenAI model, fast reasoning for specialist agents."""
+    try:
+        from crewai import LLM
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            _warn("OPENAI_API_KEY not set for nano — falling back to Mistral.")
+            return _make_mistral()
+        return LLM(
+            model=model or "gpt-4.1-nano",
+            api_key=api_key,
+            temperature=0.1,   # lower temp for classification/scoring tasks
+            max_tokens=512,    # nano tasks are concise
+        )
+    except Exception as exc:
+        _warn(f"GPT-4.1-nano init failed: {exc} — falling back to Mistral.")
+        return _make_mistral()
+
+
+def _make_mini(model: Optional[str] = None):
+    """GPT-4.1-mini — mid-tier for complex trade plans."""
+    try:
+        from crewai import LLM
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            _warn("OPENAI_API_KEY not set for mini — falling back to Mistral.")
+            return _make_mistral()
+        return LLM(
+            model=model or "gpt-4.1-mini",
+            api_key=api_key,
+            temperature=0.2,
+            max_tokens=1024,
+        )
+    except Exception as exc:
+        _warn(f"GPT-4.1-mini init failed: {exc} — falling back to Mistral.")
+        return _make_mistral()
+
+
 def _make_litellm(default_model: str):
     """Generic LiteLLM builder for Perplexity, Gemini, Grok, DeepSeek."""
     def builder(model: Optional[str] = None):
@@ -251,6 +280,8 @@ _PROVIDERS = {
     "mistral":    _make_mistral,
     "anthropic":  _make_anthropic,
     "openai":     _make_openai,
+    "nano":       _make_nano,       # GPT-4.1-nano — sentiment/impact/validation agents
+    "mini":       _make_mini,       # GPT-4.1-mini — trade planner
     "perplexity": _make_litellm("perplexity/sonar-pro"),
     "gemini":     _make_litellm("gemini/gemini-1.5-pro"),
     "grok":       _make_litellm("openai/grok-3"),

@@ -55,6 +55,65 @@ research_contrarian_task:
     - research_macro_task
     - research_context_task
 
+# ─── Crew 1b: Specialist Tasks (GPT-4.1-nano) ────────────────
+
+sentiment_scoring_task:
+  description: >
+    Score the market sentiment for this asset using the research context below.
+
+    Asset brief:
+    {candidate_brief}
+
+    Respond ONLY with a valid JSON object.
+    Required keys: sentiment_score (float -1.0 to +1.0),
+    sentiment_label (string: "bearish" / "neutral" / "bullish" / "strongly_bullish" / "strongly_bearish"),
+    justification (string, one sentence).
+  expected_output: >
+    JSON: {"sentiment_score": 0.3, "sentiment_label": "bullish", "justification": "..."}
+  agent: sentiment_scorer
+  context:
+    - research_macro_task
+
+news_impact_task:
+  description: >
+    Assess the price impact of news catalysts for this asset.
+
+    Asset brief:
+    {candidate_brief}
+
+    Respond ONLY with a valid JSON object.
+    Required keys: catalysts_assessed (list of {catalyst, impact, bias}),
+    overall_impact ("HIGH" / "MEDIUM" / "LOW"),
+    directional_bias ("bullish" / "bearish" / "neutral"),
+    impact_summary (string, one sentence).
+  expected_output: >
+    JSON: {"catalysts_assessed": [...], "overall_impact": "MEDIUM",
+    "directional_bias": "bullish", "impact_summary": "..."}
+  agent: news_impact_assessor
+  context:
+    - research_macro_task
+    - sentiment_scoring_task
+
+technical_validation_task:
+  description: >
+    Validate the technical structure for this asset's signal.
+
+    Asset brief:
+    {candidate_brief}
+
+    Check: trend alignment, key levels, volatility regime, momentum.
+    Respond ONLY with a valid JSON object.
+    Required keys: structure_valid (bool), alignment_score (float 0.0-1.0),
+    key_levels (list of strings), technical_notes (string).
+  expected_output: >
+    JSON: {"structure_valid": true, "alignment_score": 0.75,
+    "key_levels": ["1.1650 support", "1.1720 resistance"],
+    "technical_notes": "..."}
+  agent: technical_validator
+  context:
+    - research_macro_task
+    - sentiment_scoring_task
+
 # ─── Crew 2: Setup Validation ────────────────────────────────
 
 validation_task:
